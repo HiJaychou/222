@@ -1,89 +1,227 @@
 #!/bin/bash
-set -u
+set -e
+
+# ========================================================
+# iwantrun VPN Web Manager Installer
+# 仓库地址：https://github.com/HiJaychou/222
+# ========================================================
+
+REPO_ZIP_URL="https://github.com/HiJaychou/222/archive/refs/heads/main.zip"
 
 APP_DIR="/opt/iwantrun-vpn-webui"
 DATA_DIR="/etc/freedom-vpn/web"
-SERVICE_FILE="/etc/systemd/system/iwantrun-vpn-web.service"
+SERVICE_NAME="iwantrun-vpn-web"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+TMP_DIR="/tmp/iwantrun-vpn-webui-install"
+
 PANEL_PORT="$(shuf -i 20000-60000 -n 1)"
 ADMIN_PASS="$(openssl rand -base64 18 | tr -d '=+/')"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-[[ "$EUID" -ne 0 ]] && echo -e "${RED}请使用 root 运行安装脚本。${NC}" && exit 1
+echo_line() {
+  echo -e "${CYAN}============================================================${NC}"
+}
 
-echo -e "${YELLOW}正在安装 iwantrun VPN Web Manager...${NC}"
-
-if command -v apt >/dev/null 2>&1; then
-  apt update -y
-  apt install -y python3 python3-venv python3-pip curl wget jq openssl iproute2
-elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y python3 python3-pip curl wget jq openssl iproute
-elif command -v yum >/dev/null 2>&1; then
-  yum install -y python3 python3-pip curl wget jq openssl iproute
-else
-  echo -e "${RED}暂不支持当前系统。推荐 Ubuntu 22.04。${NC}"
+die() {
+  echo -e "${RED}错误：$1${NC}"
   exit 1
-fi
+}
 
-mkdir -p "$APP_DIR" "$DATA_DIR"
-cp -r app requirements.txt "$APP_DIR/"
+check_root() {
+  if [[ "$EUID" -ne 0 ]]; then
+    die "请使用 root 用户运行此脚本。"
+  fi
+}
 
-cd "$APP_DIR"
-python3 -m venv venv
-"$APP_DIR/venv/bin/pip" install --upgrade pip
-"$APP_DIR/venv/bin/pip" install -r requirements.txt
+install_dependencies() {
+  echo -e "${YELLOW}正在安装系统依赖...${NC}"
 
-cat > "$DATA_DIR/settings.json" <<EOF2
+  if command -v apt >/dev/null 2>&1; then
+    apt update -y
+    apt install -y python3 python3-venv python3-pip curl wget jq openssl iproute2 unzip
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y python3 python3-pip curl wget jq openssl iproute unzip
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3 python3-pip curl wget jq openssl iproute unzip
+  else
+    die "暂不支持当前系统。推荐使用 Ubuntu 22.04。"
+  fi
+}
+
+cleanup_old_install() {
+  echo -e "${YELLOW}正在清理旧的 Web 面板安装文件...${NC}"
+
+  systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+
+  rm -f "$SERVICE_FILE"
+  systemctl daemon-reload || true
+
+  rm -rf "$APP_DIR"
+  mkdir -p "$APP_DIR" "$DATA_DIR"
+}
+
+download_project() {
+  echo -e "${YELLOW}正在下载 Web 面板完整项目...${NC}"
+
+  rm -rf "$TMP_DIR"
+  mkdir -p "$TMP_DIR"
+
+  wget -O "$TMP_DIR/source.zip" "$REPO_ZIP_URL"
+
+  unzip -q "$TMP_DIR/source.zip" -d "$TMP_DIR"
+
+  SRC_DIR="$(find "$TMP_DIR" -maxdepth 1 -type d -name '222-*' | head -n 1)"
+
+  if [[ -z "$SRC_DIR" ]]; then
+    die "没有找到解压后的项目目录。"
+  fi
+
+  if [[ ! -d "$SRC_DIR/app" ]]; then
+    die "GitHub 仓库里没有 app 目录，请确认 app/ 已经上传。"
+  fi
+
+  if [[ ! -f "$SRC_DIR/requirements.txt" ]]; then
+    die "GitHub 仓库里没有 requirements.txt，请确认已经上传。"
+  fi
+
+  cp -r "$SRC_DIR/app" "$APP_DIR/"
+  cp "$SRC_DIR/requirements.txt" "$APP_DIR/"
+}
+
+install_python_env() {
+  echo -e "${YELLOW}正在创建 Python 虚拟环境...${NC}"
+
+  cd "$APP_DIR"
+
+  python3 -m venv venv
+
+  echo -e "${YELLOW}正在安装 Python 依赖...${NC}"
+
+  "$APP_DIR/venv/bin/pip" install --upgrade pip
+  "$APP_DIR/venv/bin/pip" install -r requirements.txt
+}
+
+init_settings_and_admin() {
+  echo -e "${YELLOW}正在初始化 Web 面板配置...${NC}"
+
+  mkdir -p "$DATA_DIR"
+
+  cat > "$DATA_DIR/settings.json" <<EOF
 {
   "panel_port": ${PANEL_PORT},
   "panel_name": "自由档案馆 VPN Web Manager"
 }
-EOF2
+EOF
 
-"$APP_DIR/venv/bin/python" -m app.main --init-admin admin "$ADMIN_PASS"
+  echo -e "${YELLOW}正在初始化管理员账号...${NC}"
 
-cat > "$SERVICE_FILE" <<EOF2
+  "$APP_DIR/venv/bin/python" -m app.main --init-admin admin "$ADMIN_PASS"
+}
+
+create_service() {
+  echo -e "${YELLOW}正在创建 systemd 服务...${NC}"
+
+  cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=iwantrun VPN Web Manager
 After=network.target
 
 [Service]
 User=root
-WorkingDirectory=$APP_DIR
+WorkingDirectory=${APP_DIR}
 Environment=IWANTRUN_PANEL_HOST=0.0.0.0
-Environment=IWANTRUN_PANEL_PORT=$PANEL_PORT
-ExecStart=$APP_DIR/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PANEL_PORT
+Environment=IWANTRUN_PANEL_PORT=${PANEL_PORT}
+ExecStart=${APP_DIR}/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PANEL_PORT}
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-EOF2
+EOF
 
-systemctl daemon-reload
-systemctl enable iwantrun-vpn-web >/dev/null 2>&1
-systemctl restart iwantrun-vpn-web
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+  systemctl restart "$SERVICE_NAME"
 
-if command -v ufw >/dev/null 2>&1; then
-  ufw allow "${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
-fi
+  sleep 2
 
-if command -v firewall-cmd >/dev/null 2>&1; then
-  firewall-cmd --permanent --add-port="${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
-  firewall-cmd --reload >/dev/null 2>&1 || true
-fi
+  if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo -e "${RED}Web 面板启动失败，最近日志如下：${NC}"
+    journalctl -u "$SERVICE_NAME" -n 100 --no-pager
+    exit 1
+  fi
+}
 
-SERVER_IP="$(curl -s4 --max-time 6 https://api.ipify.org || hostname -I | awk '{print $1}')"
+open_firewall() {
+  echo -e "${YELLOW}正在尝试放行系统防火墙端口：${PANEL_PORT}/TCP${NC}"
 
-echo
-echo -e "${GREEN}安装完成！${NC}"
-echo
-echo "Web 面板地址： http://${SERVER_IP}:${PANEL_PORT}"
-echo "管理员账号： admin"
-echo "管理员密码： ${ADMIN_PASS}"
-echo
-echo -e "${YELLOW}重要提醒：请到 VPS 后台防火墙 / 安全组放行：${PANEL_PORT}/TCP${NC}"
-echo
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow "${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  fi
+}
+
+get_server_ip() {
+  SERVER_IP="$(curl -s4 --max-time 6 https://api.ipify.org || true)"
+
+  if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP="$(hostname -I | awk '{print $1}')"
+  fi
+
+  if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP="你的服务器IP"
+  fi
+}
+
+print_result() {
+  echo_line
+  echo -e "${GREEN}Web 管理面板安装完成！${NC}"
+  echo_line
+  echo
+  echo -e "访问地址：${GREEN}http://${SERVER_IP}:${PANEL_PORT}${NC}"
+  echo
+  echo -e "管理员账号：${GREEN}admin${NC}"
+  echo -e "管理员密码：${GREEN}${ADMIN_PASS}${NC}"
+  echo
+  echo -e "${YELLOW}重要提醒：${NC}"
+  echo -e "请到 VPS 后台防火墙 / 安全组手动放行：${GREEN}${PANEL_PORT}/TCP${NC}"
+  echo
+  echo -e "${YELLOW}如果无法打开网页，请运行下面命令检查：${NC}"
+  echo
+  echo "systemctl status ${SERVICE_NAME} --no-pager"
+  echo "journalctl -u ${SERVICE_NAME} -n 100 --no-pager"
+  echo "ss -lntup | grep ${PANEL_PORT}"
+  echo
+  echo_line
+}
+
+main() {
+  check_root
+
+  echo_line
+  echo -e "${GREEN}自由档案馆 | iwantrun.com VPN Web Manager 安装脚本${NC}"
+  echo_line
+
+  install_dependencies
+  cleanup_old_install
+  download_project
+  install_python_env
+  init_settings_and_admin
+  create_service
+  open_firewall
+  get_server_ip
+  rm -rf "$TMP_DIR"
+  print_result
+}
+
+main "$@"
