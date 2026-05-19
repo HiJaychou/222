@@ -2,7 +2,7 @@
 set -e
 
 # ========================================================
-# 自由档案馆 | iwantrun.com VPN Web Manager 安装脚本
+# iwantrun VPN Web Manager Installer
 # 仓库地址：https://github.com/HiJaychou/222
 # ========================================================
 
@@ -13,8 +13,6 @@ DATA_DIR="/etc/freedom-vpn/web"
 SERVICE_NAME="iwantrun-vpn-web"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 TMP_DIR="/tmp/iwantrun-vpn-webui-install"
-
-SB_BIN="/usr/local/bin/sing-box"
 
 PANEL_PORT="$(shuf -i 20000-60000 -n 1)"
 ADMIN_PASS="$(openssl rand -base64 18 | tr -d '=+/')"
@@ -40,71 +38,19 @@ check_root() {
   fi
 }
 
-detect_arch() {
-  case "$(uname -m)" in
-    x86_64|amd64)
-      echo "amd64"
-      ;;
-    aarch64|arm64)
-      echo "arm64"
-      ;;
-    *)
-      die "暂不支持当前架构：$(uname -m)"
-      ;;
-  esac
-}
-
 install_dependencies() {
   echo -e "${YELLOW}正在安装系统依赖...${NC}"
 
   if command -v apt >/dev/null 2>&1; then
     apt update -y
-    apt install -y python3 python3-venv python3-pip curl wget jq openssl iproute2 unzip tar ca-certificates
+    apt install -y python3 python3-venv python3-pip curl wget jq openssl iproute2 unzip
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y python3 python3-pip curl wget jq openssl iproute unzip tar ca-certificates
+    dnf install -y python3 python3-pip curl wget jq openssl iproute unzip
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y python3 python3-pip curl wget jq openssl iproute unzip tar ca-certificates
+    yum install -y python3 python3-pip curl wget jq openssl iproute unzip
   else
-    die "暂不支持当前系统。推荐 Ubuntu 22.04。"
+    die "暂不支持当前系统。推荐使用 Ubuntu 22.04。"
   fi
-}
-
-install_singbox_core() {
-  local arch sb_ver url
-
-  if [[ -x "$SB_BIN" ]]; then
-    echo -e "${GREEN}检测到 sing-box 已安装：$($SB_BIN version | head -n 1)${NC}"
-    return
-  fi
-
-  echo -e "${YELLOW}未检测到 sing-box，正在安装 sing-box 最新版...${NC}"
-
-  arch="$(detect_arch)"
-
-  sb_ver="$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name | sed 's/^v//')"
-
-  if [[ -z "$sb_ver" || "$sb_ver" == "null" ]]; then
-    die "无法获取 sing-box 最新版本。"
-  fi
-
-  url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${arch}.tar.gz"
-
-  rm -rf /tmp/sing-box-install
-  mkdir -p /tmp/sing-box-install
-
-  wget -qO /tmp/sing-box-install/sb.tar.gz "$url" || die "下载 sing-box 失败。"
-  tar -xzf /tmp/sing-box-install/sb.tar.gz -C /tmp/sing-box-install || die "解压 sing-box 失败。"
-
-  find /tmp/sing-box-install -type f -name sing-box -exec mv {} "$SB_BIN" \;
-  chmod +x "$SB_BIN"
-
-  rm -rf /tmp/sing-box-install
-
-  if [[ ! -x "$SB_BIN" ]]; then
-    die "sing-box 安装失败。"
-  fi
-
-  echo -e "${GREEN}sing-box 安装完成：v${sb_ver}${NC}"
 }
 
 cleanup_old_install() {
@@ -247,14 +193,6 @@ print_result() {
   echo -e "管理员账号：${GREEN}admin${NC}"
   echo -e "管理员密码：${GREEN}${ADMIN_PASS}${NC}"
   echo
-
-  if [[ -x "$SB_BIN" ]]; then
-    echo -e "sing-box：${GREEN}$($SB_BIN version | head -n 1)${NC}"
-  else
-    echo -e "sing-box：${RED}未安装${NC}"
-  fi
-
-  echo
   echo -e "${YELLOW}重要提醒：${NC}"
   echo -e "请到 VPS 后台防火墙 / 安全组手动放行：${GREEN}${PANEL_PORT}/TCP${NC}"
   echo
@@ -275,7 +213,6 @@ main() {
   echo_line
 
   install_dependencies
-  install_singbox_core
   cleanup_old_install
   download_project
   install_python_env
@@ -283,9 +220,7 @@ main() {
   create_service
   open_firewall
   get_server_ip
-
   rm -rf "$TMP_DIR"
-
   print_result
 }
 
