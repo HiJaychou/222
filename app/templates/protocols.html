@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block content %}
+<div class="topbar"><div><h1>协议管理</h1><p>安装协议、管理运行状态、查看所有用户链接和二维码。</p></div></div>
+{% if msg %}<div class="alert green">{{ msg }}</div>{% endif %}
+{% if error %}<div class="alert red">{{ error }}</div>{% endif %}
+<div class="card"><h2>sing-box 内核</h2><p>当前版本：<strong>{{ singbox_version }}</strong></p><button class="btn gray" disabled>更新 sing-box 内核（下一步接入）</button></div>
+<section class="grid grid-2 mt">
+{% for p in protocols %}
+<div class="card">
+  <h2>{{ p.protocol_name }}</h2>
+  <ul class="info-list">
+    <li><strong>状态</strong><span>{% if p.installed %}已安装 / {{ status[p.protocol_key] }}{% else %}未安装{% endif %}</span></li>
+    <li><strong>服务名</strong><span>{{ p.service_name }}</span></li>
+    <li><strong>端口</strong><span>{{ p.port or '未设置' }}{{ '/' + p.port_type if p.port else '' }}</span></li>
+    <li><strong>配置文件</strong><span>{{ p.config_path }}</span></li>
+  </ul>
+  {% if not p.installed %}
+  <form class="install-form mt" method="post" action="/protocols/{{ p.protocol_key }}/install">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input name="username" placeholder="第一个用户名，例如 user001" required>
+    <input name="password" placeholder="密码可留空随机生成">
+    <button class="btn" type="submit">安装并生成节点</button>
+  </form>
+  {% else %}
+  <div class="actions protocol-actions mt">
+    <form method="post" action="/protocols/{{ p.protocol_key }}/toggle">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if status[p.protocol_key] == '运行中' %}
+      <button class="btn red" type="submit" onclick="return confirm('确认关闭 {{ p.protocol_name }}？')">关闭</button>
+      {% else %}
+      <button class="btn" type="submit">开启</button>
+      {% endif %}
+    </form>
+    <form method="post" action="/protocols/{{ p.protocol_key }}/restart">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn gray" type="submit">重启</button>
+    </form>
+    <button class="btn gray" onclick="toggleBox('links-{{ p.protocol_key }}')">所有用户链接 / 二维码</button>
+  </div>
+  <div id="links-{{ p.protocol_key }}" class="link-panel" style="display:none;">
+    {% for item in links[p.protocol_key] %}
+    <div class="link-item"><strong>{{ item.name }}</strong><textarea readonly>{{ item.link }}</textarea><button class="btn gray" onclick="copyValue(this.previousElementSibling)">复制链接</button><div><img class="qr" src="/protocols/{{ p.protocol_key }}/qr/{{ item.name }}"></div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+</section>
+{% endblock %}
