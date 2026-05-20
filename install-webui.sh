@@ -13,7 +13,11 @@ ADMIN_PASS="$(openssl rand -base64 18 | tr -d '=+/')"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 echo_line(){ echo -e "${CYAN}============================================================${NC}"; }
 die(){ echo -e "${RED}错误：$1${NC}"; exit 1; }
-check_root(){ [[ "$EUID" -ne 0 ]] && die "请使用 root 用户运行此脚本。"; return 0; }
+check_root(){
+  if [[ "$EUID" -ne 0 ]]; then
+    die "请使用 root 用户运行此脚本。"
+  fi
+}
 detect_arch(){ case "$(uname -m)" in x86_64|amd64) echo "amd64" ;; aarch64|arm64) echo "arm64" ;; *) die "暂不支持当前架构：$(uname -m)" ;; esac; }
 install_dependencies(){
   echo -e "${YELLOW}正在安装系统依赖...${NC}"
@@ -108,7 +112,15 @@ open_firewall(){
   if command -v ufw >/dev/null 2>&1; then ufw allow "${PANEL_PORT}/tcp" >/dev/null 2>&1 || true; fi
   if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --permanent --add-port="${PANEL_PORT}/tcp" >/dev/null 2>&1 || true; firewall-cmd --reload >/dev/null 2>&1 || true; fi
 }
-get_server_ip(){ SERVER_IP="$(curl -s4 --max-time 6 https://api.ipify.org || true)"; [[ -z "$SERVER_IP" ]] && SERVER_IP="$(hostname -I | awk '{print $1}')"; [[ -z "$SERVER_IP" ]] && SERVER_IP="你的服务器IP"; }
+get_server_ip(){
+  SERVER_IP="$(curl -s4 --max-time 6 https://api.ipify.org || true)"
+  if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP="$(hostname -I | awk '{print $1}')"
+  fi
+  if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP="你的服务器IP"
+  fi
+}
 print_result(){ echo_line; echo -e "${GREEN}Web 管理面板安装完成！${NC}"; echo_line; echo "访问地址：http://${SERVER_IP}:${PANEL_PORT}"; echo "管理员账号：admin"; echo "管理员密码：${ADMIN_PASS}"; echo "sing-box：$($SB_BIN version | head -n 1)"; echo -e "${YELLOW}请到 VPS 后台防火墙 / 安全组手动放行：${PANEL_PORT}/TCP${NC}"; }
 main(){ check_root; echo_line; echo -e "${GREEN}自由档案馆 | iwantrun.com VPN Web Manager 安装脚本${NC}"; echo_line; install_dependencies; install_singbox_core; cleanup_old_install; download_project; install_python_env; init_settings_and_admin; create_service; open_firewall; get_server_ip; rm -rf "$TMP_DIR"; print_result; }
 main "$@"
