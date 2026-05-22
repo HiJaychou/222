@@ -1,4 +1,3 @@
-# iwantrun VPN Web Manager
 
 完整 Web 管理面板代码。
 
